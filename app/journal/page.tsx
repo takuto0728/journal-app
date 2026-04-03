@@ -1,90 +1,84 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-
-type Question = { id: number; text: string; order: number }
+import { QUESTIONS } from '@/lib/questions'
+import { useJournal } from '@/lib/useJournal'
 
 export default function JournalPage() {
   const router = useRouter()
-  const [questions, setQuestions] = useState<Question[]>([])
-  const [current, setCurrent] = useState(0)
+  const { draft, loaded, saveEntry, saveDraft, clearDraft } = useJournal()
+  const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<string[]>(['', '', ''])
-  const [loading, setLoading] = useState(false)
+  const [draftRestored, setDraftRestored] = useState(false)
+  const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    fetch('/api/questions').then(r => r.json()).then(setQuestions)
-  }, [])
+    if (loaded && draft && !draftRestored) {
+      const today = new Date().toISOString().split('T')[0]
+      if (draft.date === today) {
+        setAnswers(draft.answers)
+        const lastAnswered = draft.answers.reduce((last, a, i) => a.trim() ? i : last, -1)
+        if (lastAnswered >= 0) setStep(Math.min(lastAnswered + 1, QUESTIONS.length - 1))
+        setDraftRestored(true)
+      }
+    }
+  }, [loaded, draft, draftRestored])
 
-  if (!questions.length) return (
-    <div className="min-h-[100svh] bg-amber-50 flex items-center justify-center">
-      <p className="text-amber-500">読み込み中...</p>
-    </div>
-  )
+  const handleChange = (value: string) => {
+    const next = [...answers]
+    next[step] = value
+    setAnswers(next)
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current)
+    autoSaveRef.current = setTimeout(() => saveDraft(next), 800)
+  }
 
-  const q = questions[current]
-  const progress = ((current + 1) / questions.length) * 100
-
-  const handleNext = async () => {
-    if (!answers[current].trim()) return
-    if (current < questions.length - 1) {
-      setCurrent(current + 1)
+  const handleNext = () => {
+    if (step < QUESTIONS.length - 1) {
+      setStep(step + 1)
     } else {
-      setLoading(true)
-      await fetch('/api/entries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answers: questions.map((q, i) => ({ questionId: q.id, text: answers[i] })),
-        }),
-      })
+      saveEntry(answers)
+      clearDraft()
       router.push('/journal/done')
     }
   }
 
+  const handleBack = () => {
+    if (step > 0) setStep(step - 1)
+    else router.push('/')
+  }
+
+  const current = QUESTIONS[step]
+  const progress = ((step + 1) / QUESTIONS.length) * 100
+
   return (
-    <main className="min-h-[100svh] bg-amber-50 flex flex-col">
-      <div className="max-w-md mx-auto w-full px-4 pt-10 pb-28 flex flex-col flex-1">
-        {/* プログレスバー */}
-        <div className="mb-8">
+    <div className="min-h-[100svh] bg-amber-50 flex flex-col max-w-md mx-auto">
+      <div className="flex-1 px-4 pt-8 pb-28">
+        <div className="mb-6">
           <div className="flex justify-between text-sm text-amber-600 mb-2">
-            <span>質問 {current + 1} / {questions.length}</span>
+            <span>{step + 1} / {QUESTIONS.length}</span>
             <span>{Math.round(progress)}%</span>
           </div>
           <div className="h-2 bg-amber-200 rounded-full">
-            <div className="h-2 bg-amber-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+            <div className="h-2 bg-amber-500 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
           </div>
         </div>
-
-        {/* 質問と入力 */}
-        <div className="flex-1 flex flex-col justify-center">
-          <p className="text-xl font-bold text-amber-900 mb-6 leading-relaxed">{q.text}</p>
-          <textarea
-            className="w-full bg-white border-2 border-amber-200 rounded-2xl p-4 text-base text-gray-800 resize-none focus:outline-none focus:border-amber-400 min-h-[200px]"
-            placeholder="ここに入力..."
-            value={answers[current]}
-            onChange={e => {
-              const next = [...answers]
-              next[current] = e.target.value
-              setAnswers(next)
-            }}
-            autoFocus
-          />
-        </div>
+        <h2 className="text-xl font-bold text-amber-900 mb-6 leading-relaxed">{current.text}</h2>
+        <textarea
+          className="w-full min-h-[200px] p-4 rounded-xl border-2 border-amber-200 bg-white focus:outline-none focus:border-amber-400 text-gray-800 text-base resize-none"
+          placeholder="ここに入力してください..."
+          value={answers[step]}
+          onChange={(e) => handleChange(e.target.value)}
+        />
       </div>
-
-      {/* 固定ボタン */}
-      <div className="fixed bottom-0 left-0 right-0 bg-amber-50 border-t border-amber-100 px-4 py-3">
-        <div className="max-w-md mx-auto">
-          <button
-            onClick={handleNext}
-            disabled={!answers[current].trim() || loading}
-            className="w-full h-14 bg-amber-500 disabled:bg-amber-200 text-white font-bold rounded-2xl text-lg transition-colors shadow-md"
-          >
-            {loading ? '保存中...' : current < questions.length - 1 ? '次へ →' : '完了 ✓'}
-          </button>
-        </div>
+      <div className="fixed bottom-0 left-0 right-0 bg-amber-50 border-t border-amber-200 p-4 flex gap-3 max-w-md mx-auto">
+        <button onClick={handleBack} className="flex-1 h-14 rounded-xl border-2 border-amber-300 text-amber-700 font-semibold text-base">
+          {step === 0 ? 'ホームへ' : '前へ'}
+        </button>
+        <button onClick={handleNext} disabled={!answers[step].trim()} className="flex-1 h-14 rounded-xl bg-amber-500 text-white font-semibold text-base disabled:opacity-40">
+          {step === QUESTIONS.length - 1 ? '完了' : '次へ'}
+        </button>
       </div>
-    </main>
+    </div>
   )
 }
